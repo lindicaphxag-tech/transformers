@@ -49,6 +49,8 @@ from ...test_modeling_common import ModelTesterMixin, floats_tensor, ids_tensor
 if is_torch_available():
     import torch
 
+    from transformers.models.mllama.modeling_mllama import MllamaCrossAttentionDecoderLayer
+
 if is_vision_available():
     pass
 
@@ -290,6 +292,37 @@ class MllamaForConditionalGenerationModelTest(ModelTesterMixin, GenerationTester
 
     def test_config(self):
         self.config_tester.run_common_tests()
+
+    def test_cross_attention_full_row_mask_blocks_visual_residual(self):
+        """Fully masked text rows must not receive visual cross-attention updates."""
+
+        class ConstantCrossAttention(torch.nn.Module):
+            def forward(self, hidden_states, **kwargs):
+                return torch.ones_like(hidden_states), None
+
+        config = self.model_tester.get_config()
+        layer = MllamaCrossAttentionDecoderLayer(config.text_config, layer_idx=0).to(torch_device)
+        layer.cross_attn = ConstantCrossAttention().to(torch_device)
+
+        with torch.no_grad():
+            layer.cross_attn_attn_gate.fill_(1.0)
+            layer.cross_attn_mlp_gate.zero_()
+
+        hidden_states = torch.zeros(1, 2, config.text_config.hidden_size, device=torch_device)
+        full_text_row_masked_out_mask = torch.tensor(
+            [[[[0.0], [1.0]]]], device=torch_device, dtype=hidden_states.dtype
+        )
+
+        output = layer(
+            hidden_states=hidden_states,
+            cross_attention_states=torch.empty(0, device=torch_device),
+            cross_attention_mask=torch.empty(0, device=torch_device),
+            attention_mask=torch.empty(0, device=torch_device),
+            full_text_row_masked_out_mask=full_text_row_masked_out_mask,
+        )
+
+        self.assertTrue(torch.equal(output[:, 0], hidden_states[:, 0]))
+        self.assertFalse(torch.equal(output[:, 1], hidden_states[:, 1]))
 
     def test_resize_embeddings_results_in_successful_loss(self):
         # resizing embeddings should result in successful loss computation
