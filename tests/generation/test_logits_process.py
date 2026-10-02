@@ -285,6 +285,24 @@ class LogitsProcessorTest(unittest.TestCase):
         # processor should not change logits in-place
         self.assertFalse(torch.all(scores == processed_scores))
 
+    def test_encoder_repetition_penalty_expands_source_rows(self):
+        encoder_input_ids = torch.tensor([[1, 3], [4, 5]], device=torch_device, dtype=torch.long)
+        scores = torch.arange(1, 9, device=torch_device, dtype=torch.float).repeat(4, 1)
+
+        processor = EncoderRepetitionPenaltyLogitsProcessor(
+            penalty=2.0, encoder_input_ids=encoder_input_ids
+        )
+        processed_scores = processor(torch.zeros(4, 1, device=torch_device, dtype=torch.long), scores)
+
+        expected = scores.clone()
+        expected[0:2, 1] *= 2
+        expected[0:2, 3] *= 2
+        expected[2:4, 4] *= 2
+        expected[2:4, 5] *= 2
+
+        torch.testing.assert_close(processed_scores, expected)
+        self.assertEqual(processor.encoder_input_ids.shape, (2, 2))
+
     def test_top_k_dist_warper(self):
         input_ids = None
         vocab_size = 10
