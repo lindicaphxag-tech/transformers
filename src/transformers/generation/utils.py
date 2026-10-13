@@ -4303,10 +4303,26 @@ class GenerationMixin(ContinuousMixin):
             getattr(torch, "_dynamo").config.cache_size_limit = 64
 
             chunk_size = generation_config.prefill_chunk_size
-            input_chunks = torch.split(input_ids, chunk_size, dim=-1)
 
             if "past_key_values" not in model_kwargs:
                 raise ValueError("Cannot use prefill chunking without a cache")
+
+            # With a prefetched prefix, chunk only the NOT-YET-CACHED suffix.
+            # Otherwise the previous prefix is appended to the cache again,
+            # corrupting generation and overflowing fixed-capacity caches.
+            cached_length = model_kwargs["past_key_values"].get_seq_length()
+            if next_sequence_length is not None:
+                if next_sequence_length <= 0:
+                    raise ValueError(
+                        "Chunked cache continuation needs at least one "
+                        "uncached input token."
+                    )
+                prefill_ids = input_ids[:, -next_sequence_length:]
+            else:
+                # The caller may already supply suffix-only input_ids while
+                # attention_mask/position_ids still cover the full sequence.
+                prefill_ids = input_ids
+            input_chunks = torch.split(prefill_ids, chunk_size, dim=-1)
 
             model_forward = (
                 self.get_compiled_call(generation_config.compile_config)
@@ -4316,7 +4332,8 @@ class GenerationMixin(ContinuousMixin):
 
             attention_mask = model_kwargs.pop("attention_mask", None)
             position_ids = model_kwargs.pop("position_ids", None)
-            past_length = 0
+            # Absolute position / mask offsets must include cached tokens.
+            past_length = cached_length
             for input_chunk in input_chunks:
                 current_length = past_length + input_chunk.shape[-1]
                 if attention_mask is not None:
