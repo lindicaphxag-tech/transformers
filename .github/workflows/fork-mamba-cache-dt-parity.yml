@@ -23,4 +23,4 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -e . pytest pytest-xdist parameterized
       - run: |
-          python -m pytest -q tests/models/mamba2/test_cache_dt_limit_parity.py
+          python -m pytest -q tests/models/mamba2/test_cache_dt_limit_parity.py tests/models/zamba2/test_cached_dt_limit_parity.py
