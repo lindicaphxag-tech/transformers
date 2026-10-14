@@ -548,6 +548,18 @@ class Mamba2Mixer(nn.Module):
             D = self.D[:, None].expand(-1, self.head_dim)
             dt_bias = self.dt_bias[:, None].expand(-1, self.head_dim)
 
+            # Cached one-token recurrence must use the same discretization as
+            # mamba2_chunk_scan during prefill. The selective update kernel
+            # performs bias+softplus internally but does NOT apply dt_limit,
+            # so active limits must be applied exactly once at this boundary.
+            dt_softplus = True
+            if self.time_step_limit[0] > 0.0 or self.time_step_limit[1] < float("inf"):
+                dt = F.softplus(dt.float() + dt_bias.float())
+                dt = dt.clamp(min=self.time_step_limit[0], max=self.time_step_limit[1])
+                dt = dt.to(hidden_states.dtype)
+                dt_bias = torch.zeros_like(dt_bias)
+                dt_softplus = False
+
             scan_output = mamba2_selective_state_update(
                 recurrent_state,
                 hidden_states,
@@ -558,7 +570,7 @@ class Mamba2Mixer(nn.Module):
                 D,
                 z=None,
                 dt_bias=dt_bias,
-                dt_softplus=True,
+                dt_softplus=dt_softplus,
                 **kwargs,
             )
             scan_output = scan_output.view(batch_size, 1, -1)
