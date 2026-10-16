@@ -316,6 +316,40 @@ class Mamba2ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_mamba2_caching(*config_and_inputs)
 
+    def test_mamba2_cached_decode_respects_time_step_limit(self):
+        config, input_ids, attention_mask, *_ = self.model_tester.prepare_config_and_inputs()
+        config.time_step_limit = (0.0, 1.0)
+
+        model = Mamba2Model(config=config).to(torch_device)
+        model.eval()
+
+        # Force the unconstrained recurrent path well beyond the configured upper
+        # bound while keeping the test deterministic and independent of a pretrained
+        # checkpoint.
+        with torch.no_grad():
+            for layer in model.layers:
+                layer.mixer.dt_bias.fill_(10.0)
+
+        with torch.no_grad():
+            full = model(input_ids, attention_mask=attention_mask, use_cache=False).last_hidden_state
+
+            prefix = model(
+                input_ids[:, :-1],
+                attention_mask=attention_mask[:, :-1],
+                use_cache=True,
+            )
+            cached = model(
+                input_ids[:, -1:],
+                attention_mask=attention_mask[:, -1:],
+                use_cache=True,
+                cache_params=prefix.cache_params,
+            ).last_hidden_state
+
+        self.assertTrue(
+            torch.allclose(full[:, -1:, :], cached, atol=1e-3, rtol=1e-3),
+            msg=f"Max diff: {(full[:, -1:, :] - cached).abs().max().item():.6f}",
+        )
+
     def test_kwargs_reach_mamba2_mixer(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_kwargs_reach_mamba2_mixer(*config_and_inputs)
