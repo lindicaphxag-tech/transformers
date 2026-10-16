@@ -541,6 +541,13 @@ class Mamba2Mixer(nn.Module):
         # Recurrent form
         if use_precomputed_states and seq_len == 1:
             hidden_states = hidden_states.view(batch_size, self.num_heads, self.head_dim)
+            # The chunked scan path clamps the positive discretization step after
+            # softplus(dt + dt_bias). Cached single-token decoding must apply the
+            # same contract before calling the recurrent update; otherwise a model
+            # can use different SSM transition dynamics for the same token depending
+            # on whether it was processed in a full scan or from cache.
+            dt = F.softplus(dt + self.dt_bias)
+            dt = torch.clamp(dt, min=self.time_step_limit[0], max=self.time_step_limit[1])
             dt = dt.transpose(1, 2).expand(-1, -1, self.head_dim)
             A = A[:, None, None].expand(-1, self.head_dim, self.ssm_state_size)
             B = B.view(batch_size, self.n_groups, self.ssm_state_size)
@@ -557,8 +564,8 @@ class Mamba2Mixer(nn.Module):
                 C,
                 D,
                 z=None,
-                dt_bias=dt_bias,
-                dt_softplus=True,
+                dt_bias=None,
+                dt_softplus=False,
                 **kwargs,
             )
             scan_output = scan_output.view(batch_size, 1, -1)
