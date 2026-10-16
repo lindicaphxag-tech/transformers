@@ -312,6 +312,28 @@ class MetalLinearTest(unittest.TestCase):
         out = layer(x)
         self.assertEqual(out.shape, (2, 5, 64))
 
+    def test_forward_prequantized_flattens_and_restores_nd_input(self):
+        from transformers.integrations.metal_quantization import MetalLinear
+
+        class FakeMetalKernel:
+            def __init__(self):
+                self.seen_shape = None
+
+            def affine_qmm_t(self, input, weight, scales, qbiases, group_size, bits):
+                self.seen_shape = input.shape
+                return input.clone()
+
+        layer = MetalLinear(in_features=128, out_features=128, bits=4, group_size=64)
+        x = torch.randn(4, 3, 128)
+        fake_kernel = FakeMetalKernel()
+
+        with patch("transformers.integrations.metal_quantization._get_metal_kernel", return_value=fake_kernel):
+            out = layer(x)
+
+        self.assertEqual(fake_kernel.seen_shape, (12, 128))
+        self.assertEqual(out.shape, (4, 3, 128))
+        torch.testing.assert_close(out, x)
+
     def test_forward_fallback_with_bias(self):
         from transformers.integrations.metal_quantization import MetalLinear
 
