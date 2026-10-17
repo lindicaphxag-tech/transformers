@@ -44,6 +44,7 @@ from transformers import (
     LlamaConfig,
     LlamaForCausalLM,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
     default_data_collator,
     logging,
@@ -1437,3 +1438,38 @@ class TrainerIntegrationTest(TestCasePlus):
         trainer.train()
         model_wrapped_after = trainer.model_wrapped
         self.assertIs(model_wrapped_before, model_wrapped_after, "should be not wrapped twice")
+
+
+@require_torch
+class TrainerStopOnTrainBeginTest(TestCasePlus):
+    """A train-begin stop must not consume a batch or perform an optimizer step."""
+
+    def test_stop_on_train_begin_finalizes_without_an_optimizer_step(self):
+        class StopAtTrainBeginCallback(TrainerCallback):
+            def __init__(self):
+                self.train_end_called = False
+
+            def on_train_begin(self, args, state, control, **kwargs):
+                control.should_training_stop = True
+                return control
+
+            def on_train_end(self, args, state, control, **kwargs):
+                self.train_end_called = True
+                return control
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            trainer = get_regression_trainer(
+                output_dir=tmp_dir,
+                max_steps=3,
+                logging_strategy="no",
+                save_strategy="no",
+                report_to=[],
+            )
+            callback = StopAtTrainBeginCallback()
+            trainer.add_callback(callback)
+
+            output = trainer.train()
+
+            assert output.global_step == 0
+            assert trainer.state.global_step == 0
+            assert callback.train_end_called
