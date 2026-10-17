@@ -1635,13 +1635,14 @@ class Trainer:
 
         self.control = self.callback_handler.on_train_begin(args, self.state, self.control)
 
-        if args.eval_on_start:
-            self._evaluate(trial, ignore_keys_for_eval, skip_scheduler=True)
-
-        # A callback may decide that the restored run has already reached its stopping condition.
-        # Honor that decision before the first epoch fetches a batch or performs an optimizer step.
+        # Honor a stop request made at train start before evaluation, epoch callbacks,
+        # dataloader iteration, or an optimizer step. This supports resumed/custom trainers
+        # whose stopping condition is already satisfied by the restored state.
         if self.control.should_training_stop:
             return self._finalize_training(trial, num_train_samples, start_time)
+
+        if args.eval_on_start:
+            self._evaluate(trial, ignore_keys_for_eval, skip_scheduler=True)
 
         for epoch in range(epochs_trained, num_train_epochs):
             self.control = self.callback_handler.on_epoch_begin(self.args, self.state, self.control)
