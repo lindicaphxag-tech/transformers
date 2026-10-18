@@ -1,0 +1,44 @@
+name: Trainer train-begin stopping CPU checks
+
+on:
+  pull_request:
+    branches:
+      - fix/trainer-stop-before-first-step-20261018
+    paths:
+      - "src/transformers/trainer.py"
+      - "tests/trainer/test_trainer.py"
+      - "tests/trainer/test_trainer_callback.py"
+      - "ci/trainer_stop_at_start_contract.py"
+      - ".github/workflows/trainer_stop_at_start_cpu.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and inspect production Trainer stop path
+        run: python3 ci/trainer_stop_at_start_contract.py
+  cpu-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e . 'accelerate>=1.2.0' datasets pytest
+      - name: Run actual callback and Trainer CPU regressions
+        env:
+          TRANSFORMERS_OFFLINE: '1'
+          HF_HUB_OFFLINE: '1'
+        run: |
+          python -m pytest -q tests/trainer/test_trainer_callback.py::TrainerCallbackTest::test_callback_can_stop_training_before_first_step tests/trainer/test_trainer.py::TrainerStopOnTrainBeginTest::test_stop_on_train_begin_finalizes_without_an_optimizer_step
