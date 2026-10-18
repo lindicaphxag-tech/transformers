@@ -1,6 +1,9 @@
 name: Trainer stop-before-first-step CPU regression
 
 on:
+  push:
+    branches:
+      - ci/trainer-stop-before-first-step-cpu-20261018
   pull_request:
     branches:
       - fix/trainer-stop-before-first-step-20261018
