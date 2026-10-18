@@ -460,6 +460,40 @@ class TrainerCallbackTest(unittest.TestCase):
         # Training should have stopped after 1 step, not 10
         self.assertEqual(trainer.state.global_step, 1)
 
+    def test_callback_can_stop_training_before_first_step(self):
+        """A train-begin stop request must prevent the first optimizer step."""
+
+        class StopAtTrainBeginCallback(TrainerCallback):
+            def __init__(self):
+                self.train_end_called = False
+                self.epoch_begin_called = False
+
+            def on_train_begin(self, args, state, control, **kwargs):
+                control.should_training_stop = True
+                return control
+
+            def on_epoch_begin(self, args, state, control, **kwargs):
+                self.epoch_begin_called = True
+                return control
+
+            def on_train_end(self, args, state, control, **kwargs):
+                self.train_end_called = True
+                return control
+
+        callback = StopAtTrainBeginCallback()
+        trainer = self._create_trainer(
+            callbacks=[callback],
+            max_steps=10,
+            logging_steps=1,
+            save_strategy="no",
+        )
+        trainer.train()
+
+        self.assertEqual(trainer.state.global_step, 0)
+        self.assertFalse(callback.epoch_begin_called)
+        self.assertTrue(callback.train_end_called)
+        self.assertFalse(trainer.is_in_train)
+
     def test_callback_receives_control_flags(self):
         """Callbacks should receive current control flags."""
         import warnings
