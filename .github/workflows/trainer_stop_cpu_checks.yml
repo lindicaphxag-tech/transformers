@@ -1,0 +1,57 @@
+name: Trainer callback early-stop CPU checks
+
+on:
+  pull_request:
+    branches:
+      - review/trainer-stop-20261019
+    paths:
+      - "src/transformers/trainer.py"
+      - "tests/trainer/test_trainer.py"
+      - "tests/trainer/test_trainer_callback.py"
+      - ".github/workflows/trainer_stop_cpu_checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source-level early-stop boundaries
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          p = Path("src/transformers/trainer.py")
+          module = ast.parse(p.read_text(encoding="utf-8"))
+          trainer = next(x for x in module.body if isinstance(x, ast.ClassDef) and x.name == "Trainer")
+          inner = next(x for x in trainer.body if isinstance(x, ast.FunctionDef) and x.name == "_inner_training_loop")
+          st = ast.unparse(inner)
+          train_callback = st.index("self.callback_handler.on_train_begin(")
+          eager_eval = st.index("if args.eval_on_start:")
+          epoch_callback = st.index("self.callback_handler.on_epoch_begin(")
+          epoch_run = st.index("self._run_epoch(")
+          assert train_callback < st.index("if self.control.should_training_stop:", train_callback) < eager_eval
+          assert epoch_callback < st.index("if self.control.should_training_stop:", epoch_callback) < epoch_run
+          print("PASS: train/epoch begin stop checks precede evaluation and batch prefetch")
+          PY
+
+  targeted-pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyTorch CPU
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Install Transformers and test dependencies
+        run: python -m pip install -e . pytest datasets accelerate parameterized
+      - name: Test callback lifecycle boundaries
+        run: pytest -q tests/trainer/test_trainer_callback.py -k 'callback_can_stop_training_before_first_step or callback_can_stop_training_before_first_epoch_batch'
+      - name: Test train-output finalization
+        run: pytest -q tests/trainer/test_trainer.py -k 'stop_on_train_begin_finalizes_without_an_optimizer_step'
