@@ -1635,6 +1635,10 @@ class Trainer:
 
         self.control = self.callback_handler.on_train_begin(args, self.state, self.control)
 
+        # Honor an immediate stop request before evaluation or the first training step.
+        if self.control.should_training_stop:
+            return self._finalize_training(trial, num_train_samples, start_time)
+
         if args.eval_on_start:
             self._evaluate(trial, ignore_keys_for_eval, skip_scheduler=True)
 
