@@ -480,6 +480,48 @@ class TrainerCallbackTest(unittest.TestCase):
         self.assertEqual(len(callback.control_modifications), 2)
 
 
+    def test_callback_can_stop_training_at_train_begin(self):
+        """An immediate stop must skip eval-on-start and all epoch/step work."""
+
+        class StopAtTrainBeginCallback(TrainerCallback):
+            def __init__(self):
+                self.evaluate_called = False
+                self.epoch_begin_called = False
+                self.train_end_called = False
+
+            def on_train_begin(self, args, state, control, **kwargs):
+                control.should_training_stop = True
+                return control
+
+            def on_evaluate(self, args, state, control, **kwargs):
+                self.evaluate_called = True
+                return control
+
+            def on_epoch_begin(self, args, state, control, **kwargs):
+                self.epoch_begin_called = True
+                return control
+
+            def on_train_end(self, args, state, control, **kwargs):
+                self.train_end_called = True
+                return control
+
+        callback = StopAtTrainBeginCallback()
+        trainer = self._create_trainer(
+            callbacks=[callback],
+            max_steps=10,
+            eval_on_start=True,
+            logging_steps=1,
+            save_strategy="no",
+        )
+        trainer.train()
+
+        self.assertEqual(trainer.state.global_step, 0)
+        self.assertFalse(callback.evaluate_called)
+        self.assertFalse(callback.epoch_begin_called)
+        self.assertTrue(callback.train_end_called)
+        self.assertFalse(trainer.is_in_train)
+
+
 @require_torch
 class StatefulCallbackTest(unittest.TestCase):
     """Tests for stateful callback persistence across checkpoints."""
